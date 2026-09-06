@@ -29,6 +29,31 @@ describe("enterprise order workflow", () => {
     expect(response.body.error.code).toBe("INSUFFICIENT_INVENTORY");
   });
 
+  it("rejects duplicate product lines when their aggregate quantity exceeds inventory", async () => {
+    const app = createApp();
+    const customer = await request(app).post("/api/v1/customers").send({ name: "Delta Ltd", email: "delta@test.dev" });
+    const product = await request(app).post("/api/v1/products").send({ sku: "SKU-250", name: "Relay", unitPrice: 25 });
+    const productId = product.body.data.id as string;
+
+    await request(app).post(`/api/v1/inventory/${productId}/adjustments`).send({ quantity: 3 }).expect(200);
+    const created = await request(app)
+      .post("/api/v1/orders")
+      .send({
+        customerId: customer.body.data.id,
+        items: [
+          { productId, quantity: 2 },
+          { productId, quantity: 2 }
+        ]
+      })
+      .expect(201);
+
+    const response = await request(app).post(`/api/v1/orders/${created.body.data.id}/confirm`).expect(409);
+    expect(response.body.error.code).toBe("INSUFFICIENT_INVENTORY");
+
+    const order = await request(app).get(`/api/v1/orders/${created.body.data.id}`).expect(200);
+    expect(order.body.data.status).toBe("PENDING");
+  });
+
   it("restores reserved inventory when a confirmed order is cancelled", async () => {
     const app = createApp();
     const customer = await request(app).post("/api/v1/customers").send({ name: "Gamma Ltd", email: "gamma@test.dev" });
