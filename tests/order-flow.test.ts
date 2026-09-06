@@ -19,6 +19,15 @@ describe("enterprise order workflow", () => {
     expect(confirmed.body.data.status).toBe("CONFIRMED");
   });
 
+  it("generates and preserves request correlation IDs", async () => {
+    const app = createApp();
+    const generated = await request(app).get("/health/live").expect(200);
+    expect(generated.headers["x-request-id"]).toBeTruthy();
+
+    const supplied = await request(app).get("/health/live").set("x-request-id", "portfolio-request-123").expect(200);
+    expect(supplied.headers["x-request-id"]).toBe("portfolio-request-123");
+  });
+
   it("rejects confirmation when inventory is insufficient", async () => {
     const app = createApp();
     const customer = await request(app).post("/api/v1/customers").send({ name: "Beta Ltd", email: "beta@test.dev" });
