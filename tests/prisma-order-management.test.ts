@@ -54,4 +54,37 @@ describePostgres("Prisma order-management persistence", () => {
     const persistedInventory = await prisma.inventory.findUnique({ where: { productId: product.id } });
     expect(persistedInventory).toMatchObject({ availableQuantity: 1, reservedQuantity: 0 });
   });
+
+  it("allows only one concurrent confirmation when stock cannot satisfy both orders", async () => {
+    const customer = await service.createCustomer({ name: "Postgres Concurrent", email: "pg-concurrent@test.dev" });
+    const product = await service.createProduct({ sku: "PG-300", name: "Controller", unitPrice: 60 });
+    await service.adjustInventory(product.id, 3);
+
+    const firstOrder = await service.createOrder({
+      customerId: customer.id,
+      items: [{ productId: product.id, quantity: 2 }]
+    });
+    const secondOrder = await service.createOrder({
+      customerId: customer.id,
+      items: [{ productId: product.id, quantity: 2 }]
+    });
+
+    const results = await Promise.allSettled([
+      service.confirmOrder(firstOrder.id),
+      service.confirmOrder(secondOrder.id)
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+
+    const inventory = await prisma.inventory.findUnique({ where: { productId: product.id } });
+    expect(inventory).toMatchObject({ availableQuantity: 1, reservedQuantity: 2 });
+
+    const orders = await prisma.order.findMany({
+      where: { id: { in: [firstOrder.id, secondOrder.id] } },
+      orderBy: { id: "asc" }
+    });
+    expect(orders.filter((order) => order.status === "CONFIRMED")).toHaveLength(1);
+    expect(orders.filter((order) => order.status === "PENDING")).toHaveLength(1);
+  });
 });
