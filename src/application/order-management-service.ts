@@ -1,11 +1,6 @@
 import { randomUUID } from "node:crypto";
-import {
-  DomainError,
-  type Customer,
-  type Inventory,
-  type Order,
-  type Product
-} from "../domain/order-model.js";
+import { DomainError, type Customer, type Inventory, type Order, type Product } from "../domain/order-model.js";
+import type { OrderManagementRepositories } from "./ports/repositories.js";
 
 export type CreateCustomerInput = { name: string; email: string };
 export type CreateProductInput = { sku: string; name: string; unitPrice: number };
@@ -15,29 +10,26 @@ export type CreateOrderInput = {
 };
 
 export class OrderManagementService {
-  private readonly customers = new Map<string, Customer>();
-  private readonly products = new Map<string, Product>();
-  private readonly inventory = new Map<string, Inventory>();
-  private readonly orders = new Map<string, Order>();
+  constructor(private readonly repositories: OrderManagementRepositories) {}
 
   createCustomer(input: CreateCustomerInput): Customer {
-    if ([...this.customers.values()].some((customer) => customer.email.toLowerCase() === input.email.toLowerCase())) {
+    if (this.repositories.customers.findByEmail(input.email)) {
       throw new DomainError("CUSTOMER_EMAIL_CONFLICT", "Customer email already exists", 409);
     }
 
     const customer: Customer = { id: randomUUID(), ...input };
-    this.customers.set(customer.id, customer);
+    this.repositories.customers.save(customer);
     return customer;
   }
 
   createProduct(input: CreateProductInput): Product {
-    if ([...this.products.values()].some((product) => product.sku.toLowerCase() === input.sku.toLowerCase())) {
+    if (this.repositories.products.findBySku(input.sku)) {
       throw new DomainError("SKU_CONFLICT", "Product SKU already exists", 409);
     }
 
     const product: Product = { id: randomUUID(), ...input };
-    this.products.set(product.id, product);
-    this.inventory.set(product.id, {
+    this.repositories.products.save(product);
+    this.repositories.inventory.save({
       productId: product.id,
       availableQuantity: 0,
       reservedQuantity: 0
@@ -46,23 +38,24 @@ export class OrderManagementService {
   }
 
   adjustInventory(productId: string, quantity: number): Inventory {
-    const record = this.inventory.get(productId);
+    const record = this.repositories.inventory.findByProductId(productId);
     if (!record) throw new DomainError("PRODUCT_NOT_FOUND", "Product not found", 404);
     if (record.availableQuantity + quantity < 0) {
       throw new DomainError("INVALID_INVENTORY_ADJUSTMENT", "Inventory cannot become negative", 409);
     }
 
-    record.availableQuantity += quantity;
-    return record;
+    const updated = { ...record, availableQuantity: record.availableQuantity + quantity };
+    this.repositories.inventory.save(updated);
+    return updated;
   }
 
   createOrder(input: CreateOrderInput): Order {
-    if (!this.customers.has(input.customerId)) {
+    if (!this.repositories.customers.findById(input.customerId)) {
       throw new DomainError("CUSTOMER_NOT_FOUND", "Customer not found", 404);
     }
 
     const items = input.items.map(({ productId, quantity }) => {
-      const product = this.products.get(productId);
+      const product = this.repositories.products.findById(productId);
       if (!product) throw new DomainError("PRODUCT_NOT_FOUND", `Product ${productId} not found`, 404);
       return {
         productId,
@@ -80,7 +73,7 @@ export class OrderManagementService {
       total: items.reduce((sum, item) => sum + item.lineTotal, 0)
     };
 
-    this.orders.set(order.id, order);
+    this.repositories.orders.save(order);
     return order;
   }
 
@@ -92,20 +85,24 @@ export class OrderManagementService {
 
     const requiredByProduct = this.aggregateQuantities(order);
     for (const [productId, quantity] of requiredByProduct) {
-      const stock = this.inventory.get(productId);
+      const stock = this.repositories.inventory.findByProductId(productId);
       if (!stock || stock.availableQuantity < quantity) {
         throw new DomainError("INSUFFICIENT_INVENTORY", "Requested quantity is not currently available", 409);
       }
     }
 
     for (const [productId, quantity] of requiredByProduct) {
-      const stock = this.inventory.get(productId)!;
-      stock.availableQuantity -= quantity;
-      stock.reservedQuantity += quantity;
+      const stock = this.repositories.inventory.findByProductId(productId)!;
+      this.repositories.inventory.save({
+        ...stock,
+        availableQuantity: stock.availableQuantity - quantity,
+        reservedQuantity: stock.reservedQuantity + quantity
+      });
     }
 
-    order.status = "CONFIRMED";
-    return order;
+    const confirmed: Order = { ...order, status: "CONFIRMED" };
+    this.repositories.orders.save(confirmed);
+    return confirmed;
   }
 
   cancelOrder(orderId: string): Order {
@@ -116,14 +113,18 @@ export class OrderManagementService {
 
     if (order.status === "CONFIRMED") {
       for (const [productId, quantity] of this.aggregateQuantities(order)) {
-        const stock = this.inventory.get(productId)!;
-        stock.availableQuantity += quantity;
-        stock.reservedQuantity -= quantity;
+        const stock = this.repositories.inventory.findByProductId(productId)!;
+        this.repositories.inventory.save({
+          ...stock,
+          availableQuantity: stock.availableQuantity + quantity,
+          reservedQuantity: stock.reservedQuantity - quantity
+        });
       }
     }
 
-    order.status = "CANCELLED";
-    return order;
+    const cancelled: Order = { ...order, status: "CANCELLED" };
+    this.repositories.orders.save(cancelled);
+    return cancelled;
   }
 
   getOrder(orderId: string): Order {
@@ -131,7 +132,7 @@ export class OrderManagementService {
   }
 
   private requireOrder(orderId: string): Order {
-    const order = this.orders.get(orderId);
+    const order = this.repositories.orders.findById(orderId);
     if (!order) throw new DomainError("ORDER_NOT_FOUND", "Order not found", 404);
     return order;
   }

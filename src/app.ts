@@ -2,6 +2,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { z } from "zod";
 import { OrderManagementService } from "./application/order-management-service.js";
 import { DomainError } from "./domain/order-model.js";
+import { createInMemoryRepositories } from "./infrastructure/in-memory-repositories.js";
 
 const customerSchema = z.object({
   name: z.string().trim().min(2),
@@ -24,7 +25,11 @@ const orderSchema = z.object({
   })).min(1)
 });
 
-export function createApp(service: OrderManagementService = new OrderManagementService()) {
+function createDefaultService() {
+  return new OrderManagementService(createInMemoryRepositories());
+}
+
+export function createApp(service: OrderManagementService = createDefaultService()) {
   const app = express();
 
   app.disable("x-powered-by");
