@@ -1,4 +1,4 @@
-import type { Customer, Inventory, Order, Product } from "../../domain/order-model.js";
+import type { Customer, Inventory, Order, OrderStatus, Product } from "../../domain/order-model.js";
 
 export interface CustomerRepository {
   findById(id: string): Promise<Customer | null>;
@@ -15,11 +15,14 @@ export interface ProductRepository {
 export interface InventoryRepository {
   findByProductId(productId: string): Promise<Inventory | null>;
   save(inventory: Inventory): Promise<void>;
+  reserveAvailable(productId: string, quantity: number): Promise<Inventory | null>;
+  releaseReserved(productId: string, quantity: number): Promise<Inventory | null>;
 }
 
 export interface OrderRepository {
   findById(id: string): Promise<Order | null>;
   save(order: Order): Promise<void>;
+  transitionStatus(id: string, expected: OrderStatus, next: OrderStatus): Promise<boolean>;
 }
 
 export type OrderRepositories = {
