@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { DomainError, type Customer, type Inventory, type Order, type Product } from "../domain/order-model.js";
+import { noopOrderCache, type OrderCache } from "./ports/order-cache.js";
 import {
   RepositoryConflictError,
   type OrderManagementRepositories,
@@ -14,7 +15,10 @@ export type CreateOrderInput = {
 };
 
 export class OrderManagementService {
-  constructor(private readonly repositories: OrderManagementRepositories) {}
+  constructor(
+    private readonly repositories: OrderManagementRepositories,
+    private readonly orderCache: OrderCache = noopOrderCache
+  ) {}
 
   async createCustomer(input: CreateCustomerInput): Promise<Customer> {
     if (await this.repositories.customers.findByEmail(input.email)) {
@@ -79,11 +83,12 @@ export class OrderManagementService {
       total: items.reduce((sum, item) => sum + item.lineTotal, 0)
     };
     await this.repositories.orders.save(order);
+    await this.cacheOrder(order);
     return order;
   }
 
   async confirmOrder(orderId: string): Promise<Order> {
-    return this.repositories.transactions.run(async (repositories) => {
+    const confirmed = await this.repositories.transactions.run(async (repositories) => {
       const order = await this.requireOrder(repositories, orderId);
       if (order.status !== "PENDING") {
         throw new DomainError("INVALID_ORDER_STATE", "Only pending orders can be confirmed", 409);
@@ -100,13 +105,14 @@ export class OrderManagementService {
       if (!transitioned) {
         throw new DomainError("INVALID_ORDER_STATE", "Only pending orders can be confirmed", 409);
       }
-
-      return { ...order, status: "CONFIRMED" };
+      return { ...order, status: "CONFIRMED" } as Order;
     });
+    await this.cacheOrder(confirmed);
+    return confirmed;
   }
 
   async cancelOrder(orderId: string): Promise<Order> {
-    return this.repositories.transactions.run(async (repositories) => {
+    const cancelled = await this.repositories.transactions.run(async (repositories) => {
       const order = await this.requireOrder(repositories, orderId);
       if (order.status === "FULFILLED" || order.status === "CANCELLED") {
         throw new DomainError("INVALID_ORDER_STATE", "Order cannot be cancelled from its current state", 409);
@@ -125,13 +131,14 @@ export class OrderManagementService {
       if (!transitioned) {
         throw new DomainError("INVALID_ORDER_STATE", "Order cannot be cancelled from its current state", 409);
       }
-
-      return { ...order, status: "CANCELLED" };
+      return { ...order, status: "CANCELLED" } as Order;
     });
+    await this.cacheOrder(cancelled);
+    return cancelled;
   }
 
   async fulfillOrder(orderId: string): Promise<Order> {
-    return this.repositories.transactions.run(async (repositories) => {
+    const fulfilled = await this.repositories.transactions.run(async (repositories) => {
       const order = await this.requireOrder(repositories, orderId);
       if (order.status !== "CONFIRMED") {
         throw new DomainError("INVALID_ORDER_STATE", "Only confirmed orders can be fulfilled", 409);
@@ -148,13 +155,34 @@ export class OrderManagementService {
       if (!transitioned) {
         throw new DomainError("INVALID_ORDER_STATE", "Only confirmed orders can be fulfilled", 409);
       }
-
-      return { ...order, status: "FULFILLED" };
+      return { ...order, status: "FULFILLED" } as Order;
     });
+    await this.cacheOrder(fulfilled);
+    return fulfilled;
   }
 
   async getOrder(orderId: string): Promise<Order> {
-    return this.requireOrder(this.repositories, orderId);
+    const cached = await this.readCachedOrder(orderId);
+    if (cached) return cached;
+    const order = await this.requireOrder(this.repositories, orderId);
+    await this.cacheOrder(order);
+    return order;
+  }
+
+  private async readCachedOrder(orderId: string): Promise<Order | null> {
+    try {
+      return await this.orderCache.get(orderId);
+    } catch {
+      return null;
+    }
+  }
+
+  private async cacheOrder(order: Order): Promise<void> {
+    try {
+      await this.orderCache.set(order);
+    } catch {
+      // Redis is an acceleration layer; cache failures must not break order workflows.
+    }
   }
 
   private async requireOrder(repositories: OrderRepositories, orderId: string): Promise<Order> {
