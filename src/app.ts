@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { OrderManagementService } from "./application/order-management-service.js";
@@ -20,6 +21,12 @@ export function createApp(service: OrderManagementService = createDefaultService
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
+  app.use((req, res, next) => {
+    const incomingRequestId = req.header("x-request-id")?.trim();
+    const requestId = incomingRequestId || randomUUID();
+    res.setHeader("x-request-id", requestId);
+    next();
+  });
 
   app.get("/health/live", (_req, res) => res.json({ status: "ok" }));
   app.get("/health/ready", (_req, res) => res.json({ status: "ready" }));
