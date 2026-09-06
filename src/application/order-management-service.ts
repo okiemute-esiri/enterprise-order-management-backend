@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { DomainError, type Customer, type Inventory, type Order, type Product } from "../domain/order-model.js";
-import type { OrderManagementRepositories, OrderRepositories } from "./ports/repositories.js";
+import {
+  RepositoryConflictError,
+  type OrderManagementRepositories,
+  type OrderRepositories
+} from "./ports/repositories.js";
 
 export type CreateCustomerInput = { name: string; email: string };
 export type CreateProductInput = { sku: string; name: string; unitPrice: number };
@@ -17,7 +21,14 @@ export class OrderManagementService {
       throw new DomainError("CUSTOMER_EMAIL_CONFLICT", "Customer email already exists", 409);
     }
     const customer: Customer = { id: randomUUID(), name: input.name, email: input.email.toLowerCase() };
-    await this.repositories.customers.save(customer);
+    try {
+      await this.repositories.customers.save(customer);
+    } catch (error) {
+      if (error instanceof RepositoryConflictError && error.constraint === "customer_email") {
+        throw new DomainError("CUSTOMER_EMAIL_CONFLICT", "Customer email already exists", 409);
+      }
+      throw error;
+    }
     return customer;
   }
 
@@ -26,7 +37,14 @@ export class OrderManagementService {
       throw new DomainError("SKU_CONFLICT", "Product SKU already exists", 409);
     }
     const product: Product = { id: randomUUID(), ...input, sku: input.sku.toUpperCase() };
-    await this.repositories.products.save(product);
+    try {
+      await this.repositories.products.save(product);
+    } catch (error) {
+      if (error instanceof RepositoryConflictError && error.constraint === "product_sku") {
+        throw new DomainError("SKU_CONFLICT", "Product SKU already exists", 409);
+      }
+      throw error;
+    }
     await this.repositories.inventory.save({ productId: product.id, availableQuantity: 0, reservedQuantity: 0 });
     return product;
   }
