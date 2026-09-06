@@ -16,7 +16,6 @@ export class OrderManagementService {
     if (this.repositories.customers.findByEmail(input.email)) {
       throw new DomainError("CUSTOMER_EMAIL_CONFLICT", "Customer email already exists", 409);
     }
-
     const customer: Customer = { id: randomUUID(), ...input };
     this.repositories.customers.save(customer);
     return customer;
@@ -26,14 +25,9 @@ export class OrderManagementService {
     if (this.repositories.products.findBySku(input.sku)) {
       throw new DomainError("SKU_CONFLICT", "Product SKU already exists", 409);
     }
-
     const product: Product = { id: randomUUID(), ...input };
     this.repositories.products.save(product);
-    this.repositories.inventory.save({
-      productId: product.id,
-      availableQuantity: 0,
-      reservedQuantity: 0
-    });
+    this.repositories.inventory.save({ productId: product.id, availableQuantity: 0, reservedQuantity: 0 });
     return product;
   }
 
@@ -43,7 +37,6 @@ export class OrderManagementService {
     if (record.availableQuantity + quantity < 0) {
       throw new DomainError("INVALID_INVENTORY_ADJUSTMENT", "Inventory cannot become negative", 409);
     }
-
     const updated = { ...record, availableQuantity: record.availableQuantity + quantity };
     this.repositories.inventory.save(updated);
     return updated;
@@ -53,18 +46,11 @@ export class OrderManagementService {
     if (!this.repositories.customers.findById(input.customerId)) {
       throw new DomainError("CUSTOMER_NOT_FOUND", "Customer not found", 404);
     }
-
     const items = input.items.map(({ productId, quantity }) => {
       const product = this.repositories.products.findById(productId);
       if (!product) throw new DomainError("PRODUCT_NOT_FOUND", `Product ${productId} not found`, 404);
-      return {
-        productId,
-        quantity,
-        unitPrice: product.unitPrice,
-        lineTotal: product.unitPrice * quantity
-      };
+      return { productId, quantity, unitPrice: product.unitPrice, lineTotal: product.unitPrice * quantity };
     });
-
     const order: Order = {
       id: randomUUID(),
       customerId: input.customerId,
@@ -72,59 +58,62 @@ export class OrderManagementService {
       items,
       total: items.reduce((sum, item) => sum + item.lineTotal, 0)
     };
-
     this.repositories.orders.save(order);
     return order;
   }
 
   confirmOrder(orderId: string): Order {
-    const order = this.requireOrder(orderId);
-    if (order.status !== "PENDING") {
-      throw new DomainError("INVALID_ORDER_STATE", "Only pending orders can be confirmed", 409);
-    }
-
-    const requiredByProduct = this.aggregateQuantities(order);
-    for (const [productId, quantity] of requiredByProduct) {
-      const stock = this.repositories.inventory.findByProductId(productId);
-      if (!stock || stock.availableQuantity < quantity) {
-        throw new DomainError("INSUFFICIENT_INVENTORY", "Requested quantity is not currently available", 409);
+    return this.repositories.transactions.run(() => {
+      const order = this.requireOrder(orderId);
+      if (order.status !== "PENDING") {
+        throw new DomainError("INVALID_ORDER_STATE", "Only pending orders can be confirmed", 409);
       }
-    }
 
-    for (const [productId, quantity] of requiredByProduct) {
-      const stock = this.repositories.inventory.findByProductId(productId)!;
-      this.repositories.inventory.save({
-        ...stock,
-        availableQuantity: stock.availableQuantity - quantity,
-        reservedQuantity: stock.reservedQuantity + quantity
-      });
-    }
+      const requiredByProduct = this.aggregateQuantities(order);
+      for (const [productId, quantity] of requiredByProduct) {
+        const stock = this.repositories.inventory.findByProductId(productId);
+        if (!stock || stock.availableQuantity < quantity) {
+          throw new DomainError("INSUFFICIENT_INVENTORY", "Requested quantity is not currently available", 409);
+        }
+      }
 
-    const confirmed: Order = { ...order, status: "CONFIRMED" };
-    this.repositories.orders.save(confirmed);
-    return confirmed;
-  }
-
-  cancelOrder(orderId: string): Order {
-    const order = this.requireOrder(orderId);
-    if (order.status === "FULFILLED" || order.status === "CANCELLED") {
-      throw new DomainError("INVALID_ORDER_STATE", "Order cannot be cancelled from its current state", 409);
-    }
-
-    if (order.status === "CONFIRMED") {
-      for (const [productId, quantity] of this.aggregateQuantities(order)) {
+      for (const [productId, quantity] of requiredByProduct) {
         const stock = this.repositories.inventory.findByProductId(productId)!;
         this.repositories.inventory.save({
           ...stock,
-          availableQuantity: stock.availableQuantity + quantity,
-          reservedQuantity: stock.reservedQuantity - quantity
+          availableQuantity: stock.availableQuantity - quantity,
+          reservedQuantity: stock.reservedQuantity + quantity
         });
       }
-    }
 
-    const cancelled: Order = { ...order, status: "CANCELLED" };
-    this.repositories.orders.save(cancelled);
-    return cancelled;
+      const confirmed: Order = { ...order, status: "CONFIRMED" };
+      this.repositories.orders.save(confirmed);
+      return confirmed;
+    });
+  }
+
+  cancelOrder(orderId: string): Order {
+    return this.repositories.transactions.run(() => {
+      const order = this.requireOrder(orderId);
+      if (order.status === "FULFILLED" || order.status === "CANCELLED") {
+        throw new DomainError("INVALID_ORDER_STATE", "Order cannot be cancelled from its current state", 409);
+      }
+
+      if (order.status === "CONFIRMED") {
+        for (const [productId, quantity] of this.aggregateQuantities(order)) {
+          const stock = this.repositories.inventory.findByProductId(productId)!;
+          this.repositories.inventory.save({
+            ...stock,
+            availableQuantity: stock.availableQuantity + quantity,
+            reservedQuantity: stock.reservedQuantity - quantity
+          });
+        }
+      }
+
+      const cancelled: Order = { ...order, status: "CANCELLED" };
+      this.repositories.orders.save(cancelled);
+      return cancelled;
+    });
   }
 
   getOrder(orderId: string): Order {

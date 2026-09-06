@@ -22,9 +22,14 @@ export interface OrderRepository {
   save(order: Order): void;
 }
 
+export interface TransactionManager {
+  run<T>(operation: () => T): T;
+}
+
 export type OrderManagementRepositories = {
   customers: CustomerRepository;
   products: ProductRepository;
   inventory: InventoryRepository;
   orders: OrderRepository;
+  transactions: TransactionManager;
 };
