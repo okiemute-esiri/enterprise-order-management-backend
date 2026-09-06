@@ -22,14 +22,17 @@ export interface OrderRepository {
   save(order: Order): Promise<void>;
 }
 
-export interface TransactionManager {
-  run<T>(operation: () => Promise<T>): Promise<T>;
-}
-
-export type OrderManagementRepositories = {
+export type OrderRepositories = {
   customers: CustomerRepository;
   products: ProductRepository;
   inventory: InventoryRepository;
   orders: OrderRepository;
+};
+
+export interface TransactionManager {
+  run<T>(operation: (repositories: OrderRepositories) => Promise<T>): Promise<T>;
+}
+
+export type OrderManagementRepositories = OrderRepositories & {
   transactions: TransactionManager;
 };

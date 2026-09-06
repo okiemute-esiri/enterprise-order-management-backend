@@ -1,0 +1,57 @@
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { OrderManagementService } from "../src/application/order-management-service.js";
+import { createPrismaRepositories } from "../src/infrastructure/prisma-repositories.js";
+import { prisma } from "../src/infrastructure/prisma.js";
+
+const describePostgres = process.env.DATABASE_URL ? describe : describe.skip;
+
+describePostgres("Prisma order-management persistence", () => {
+  const service = new OrderManagementService(createPrismaRepositories(prisma));
+
+  beforeEach(async () => {
+    await prisma.orderItem.deleteMany();
+    await prisma.order.deleteMany();
+    await prisma.inventory.deleteMany();
+    await prisma.product.deleteMany();
+    await prisma.customer.deleteMany();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("persists order confirmation and inventory reservation atomically", async () => {
+    const customer = await service.createCustomer({ name: "Postgres Acme", email: "pg-acme@test.dev" });
+    const product = await service.createProduct({ sku: "PG-100", name: "Industrial Sensor", unitPrice: 125 });
+    await service.adjustInventory(product.id, 5);
+    const order = await service.createOrder({
+      customerId: customer.id,
+      items: [{ productId: product.id, quantity: 2 }]
+    });
+
+    const confirmed = await service.confirmOrder(order.id);
+    expect(confirmed.status).toBe("CONFIRMED");
+
+    const persistedOrder = await prisma.order.findUnique({ where: { id: order.id } });
+    const persistedInventory = await prisma.inventory.findUnique({ where: { productId: product.id } });
+    expect(persistedOrder?.status).toBe("CONFIRMED");
+    expect(persistedInventory).toMatchObject({ availableQuantity: 3, reservedQuantity: 2 });
+  });
+
+  it("restores reserved inventory when a confirmed order is cancelled", async () => {
+    const customer = await service.createCustomer({ name: "Postgres Beta", email: "pg-beta@test.dev" });
+    const product = await service.createProduct({ sku: "PG-200", name: "Gateway", unitPrice: 80 });
+    await service.adjustInventory(product.id, 1);
+    const order = await service.createOrder({
+      customerId: customer.id,
+      items: [{ productId: product.id, quantity: 1 }]
+    });
+
+    await service.confirmOrder(order.id);
+    const cancelled = await service.cancelOrder(order.id);
+    expect(cancelled.status).toBe("CANCELLED");
+
+    const persistedInventory = await prisma.inventory.findUnique({ where: { productId: product.id } });
+    expect(persistedInventory).toMatchObject({ availableQuantity: 1, reservedQuantity: 0 });
+  });
+});

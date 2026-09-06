@@ -2,6 +2,7 @@ import type {
   CustomerRepository,
   InventoryRepository,
   OrderManagementRepositories,
+  OrderRepositories,
   OrderRepository,
   ProductRepository,
   TransactionManager
@@ -56,16 +57,22 @@ class InMemoryTransactionManager implements TransactionManager {
     private readonly orders: InMemoryOrderRepository
   ) {}
 
-  async run<T>(operation: () => Promise<T>): Promise<T> {
+  async run<T>(operation: (repositories: OrderRepositories) => Promise<T>): Promise<T> {
     const snapshots = {
       customers: this.customers.snapshot(),
       products: this.products.snapshot(),
       inventory: this.inventory.snapshot(),
       orders: this.orders.snapshot()
     };
+    const repositories: OrderRepositories = {
+      customers: this.customers,
+      products: this.products,
+      inventory: this.inventory,
+      orders: this.orders
+    };
 
     try {
-      return await operation();
+      return await operation(repositories);
     } catch (error) {
       this.customers.restore(snapshots.customers);
       this.products.restore(snapshots.products);

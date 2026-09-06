@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { DomainError, type Customer, type Inventory, type Order, type Product } from "../domain/order-model.js";
-import type { OrderManagementRepositories } from "./ports/repositories.js";
+import type { OrderManagementRepositories, OrderRepositories } from "./ports/repositories.js";
 
 export type CreateCustomerInput = { name: string; email: string };
 export type CreateProductInput = { sku: string; name: string; unitPrice: number };
@@ -16,7 +16,7 @@ export class OrderManagementService {
     if (await this.repositories.customers.findByEmail(input.email)) {
       throw new DomainError("CUSTOMER_EMAIL_CONFLICT", "Customer email already exists", 409);
     }
-    const customer: Customer = { id: randomUUID(), ...input };
+    const customer: Customer = { id: randomUUID(), name: input.name, email: input.email.toLowerCase() };
     await this.repositories.customers.save(customer);
     return customer;
   }
@@ -25,7 +25,7 @@ export class OrderManagementService {
     if (await this.repositories.products.findBySku(input.sku)) {
       throw new DomainError("SKU_CONFLICT", "Product SKU already exists", 409);
     }
-    const product: Product = { id: randomUUID(), ...input };
+    const product: Product = { id: randomUUID(), ...input, sku: input.sku.toUpperCase() };
     await this.repositories.products.save(product);
     await this.repositories.inventory.save({ productId: product.id, availableQuantity: 0, reservedQuantity: 0 });
     return product;
@@ -65,24 +65,24 @@ export class OrderManagementService {
   }
 
   async confirmOrder(orderId: string): Promise<Order> {
-    return this.repositories.transactions.run(async () => {
-      const order = await this.requireOrder(orderId);
+    return this.repositories.transactions.run(async (repositories) => {
+      const order = await this.requireOrder(repositories, orderId);
       if (order.status !== "PENDING") {
         throw new DomainError("INVALID_ORDER_STATE", "Only pending orders can be confirmed", 409);
       }
 
       const requiredByProduct = this.aggregateQuantities(order);
       for (const [productId, quantity] of requiredByProduct) {
-        const stock = await this.repositories.inventory.findByProductId(productId);
+        const stock = await repositories.inventory.findByProductId(productId);
         if (!stock || stock.availableQuantity < quantity) {
           throw new DomainError("INSUFFICIENT_INVENTORY", "Requested quantity is not currently available", 409);
         }
       }
 
       for (const [productId, quantity] of requiredByProduct) {
-        const stock = await this.repositories.inventory.findByProductId(productId);
+        const stock = await repositories.inventory.findByProductId(productId);
         if (!stock) throw new DomainError("PRODUCT_NOT_FOUND", "Product inventory not found", 404);
-        await this.repositories.inventory.save({
+        await repositories.inventory.save({
           ...stock,
           availableQuantity: stock.availableQuantity - quantity,
           reservedQuantity: stock.reservedQuantity + quantity
@@ -90,23 +90,23 @@ export class OrderManagementService {
       }
 
       const confirmed: Order = { ...order, status: "CONFIRMED" };
-      await this.repositories.orders.save(confirmed);
+      await repositories.orders.save(confirmed);
       return confirmed;
     });
   }
 
   async cancelOrder(orderId: string): Promise<Order> {
-    return this.repositories.transactions.run(async () => {
-      const order = await this.requireOrder(orderId);
+    return this.repositories.transactions.run(async (repositories) => {
+      const order = await this.requireOrder(repositories, orderId);
       if (order.status === "FULFILLED" || order.status === "CANCELLED") {
         throw new DomainError("INVALID_ORDER_STATE", "Order cannot be cancelled from its current state", 409);
       }
 
       if (order.status === "CONFIRMED") {
         for (const [productId, quantity] of this.aggregateQuantities(order)) {
-          const stock = await this.repositories.inventory.findByProductId(productId);
+          const stock = await repositories.inventory.findByProductId(productId);
           if (!stock) throw new DomainError("PRODUCT_NOT_FOUND", "Product inventory not found", 404);
-          await this.repositories.inventory.save({
+          await repositories.inventory.save({
             ...stock,
             availableQuantity: stock.availableQuantity + quantity,
             reservedQuantity: stock.reservedQuantity - quantity
@@ -115,17 +115,17 @@ export class OrderManagementService {
       }
 
       const cancelled: Order = { ...order, status: "CANCELLED" };
-      await this.repositories.orders.save(cancelled);
+      await repositories.orders.save(cancelled);
       return cancelled;
     });
   }
 
   async getOrder(orderId: string): Promise<Order> {
-    return this.requireOrder(orderId);
+    return this.requireOrder(this.repositories, orderId);
   }
 
-  private async requireOrder(orderId: string): Promise<Order> {
-    const order = await this.repositories.orders.findById(orderId);
+  private async requireOrder(repositories: OrderRepositories, orderId: string): Promise<Order> {
+    const order = await repositories.orders.findById(orderId);
     if (!order) throw new DomainError("ORDER_NOT_FOUND", "Order not found", 404);
     return order;
   }
