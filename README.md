@@ -2,7 +2,7 @@
 
 A production-oriented TypeScript backend demonstrating customer, product, inventory and order-management workflows with explicit business-state rules, validation, automated tests, Docker packaging and CI.
 
-> **Project status:** A runnable in-memory implementation is present. Repository ports isolate the application service from persistence. PostgreSQL persistence, Prisma migrations, transaction-scoped repository adapters and CI-backed database integration have been added and are undergoing final CI verification; concurrency-safe reservation remains a roadmap item until explicitly verified.
+> **Project status:** The repository now includes in-memory and Prisma/PostgreSQL persistence, transaction-scoped repository adapters, PostgreSQL-backed integration tests, concurrency-safe reservation semantics verified under competing confirmations, request correlation IDs, an OpenAPI specification, Docker packaging and CI-backed database verification.
 
 ## Implemented
 
@@ -24,15 +24,18 @@ A production-oriented TypeScript backend demonstrating customer, product, invent
 - order creation with price snapshots and calculated totals
 - order confirmation with aggregate inventory validation and reservation
 - protection against duplicate product lines exceeding total available stock
+- concurrency-safe PostgreSQL reservation semantics verified with competing confirmations
 - order cancellation with reserved-stock restoration
 - controlled order-state transitions
 - Zod request validation
 - structured domain errors
+- request correlation via `x-request-id` generation/preservation
 - liveness and readiness endpoints
 - graceful SIGTERM/SIGINT shutdown
 - Vitest application-service tests
 - Vitest + Supertest API workflow tests
-- PostgreSQL integration tests for persisted confirmation and cancellation
+- PostgreSQL integration tests for persisted confirmation, cancellation and concurrency behavior
+- OpenAPI 3.0 specification in `docs/openapi.yaml`
 - multi-stage non-root Docker image with generated Prisma client
 - GitHub Actions CI configured with PostgreSQL 16, migrations, typecheck, tests, build and Docker verification
 
@@ -76,6 +79,10 @@ POST /api/v1/orders/:orderId/confirm
 POST /api/v1/orders/:orderId/cancel
 ```
 
+The full OpenAPI contract is documented in `docs/openapi.yaml`.
+
+All HTTP responses include an `x-request-id` header. A caller-provided `x-request-id` is preserved; otherwise the service generates one.
+
 ## Order Workflow
 
 ```text
@@ -92,6 +99,8 @@ FULFILLED
 
 Confirmation aggregates quantities by product before mutating inventory. If duplicate order lines request the same product, their combined quantity is validated against available stock. If any aggregate requirement cannot be satisfied, confirmation fails with `409 INSUFFICIENT_INVENTORY`, inventory is left unchanged and the order remains pending.
 
+For PostgreSQL, reservation uses atomic conditional persistence semantics inside the transaction boundary. The concurrency integration test starts competing confirmations against stock that can satisfy only one order and verifies that overselling does not occur.
+
 When a confirmed order is cancelled, reserved quantities are released back to available inventory.
 
 ## PostgreSQL
@@ -105,8 +114,6 @@ npm run prisma:generate
 npm run prisma:deploy
 npm run dev
 ```
-
-The current Prisma implementation provides durable persistence and transaction-scoped repository operations. It does **not** yet claim concurrency-safe inventory reservation under competing confirmations; row locking or an equivalent conditional-update strategy is still required and will be tested before that capability is claimed.
 
 ## Run Locally
 
@@ -134,7 +141,7 @@ docker build -t enterprise-order-management-backend .
 
 ## CI
 
-GitHub Actions is configured to run PostgreSQL 16 and perform migration deployment, type checking, unit/API/integration tests, production build and Docker image verification.
+GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checking, unit/API/integration tests, production build and Docker image verification.
 
 ## Roadmap
 
@@ -157,19 +164,20 @@ GitHub Actions is configured to run PostgreSQL 16 and perform migration deployme
 - [x] Add Prisma transaction-scoped repository boundary
 - [x] Add PostgreSQL integration tests
 - [x] Configure PostgreSQL CI service and migration deployment
+- [x] Verify PostgreSQL CI on main
+- [x] Add concurrency-safe inventory reservation
+- [x] Add concurrency integration tests proving no overselling
 - [x] Add Docker packaging
 - [x] Add operational health endpoints
 - [x] Add graceful shutdown
-- [ ] Verify the complete PostgreSQL CI path on main
-- [ ] Add concurrency-safe inventory reservation with locking or atomic conditional updates
-- [ ] Add concurrency integration tests proving no overselling
+- [x] Add OpenAPI specification
+- [x] Add request correlation IDs
 - [ ] Translate database uniqueness races to stable domain conflicts
 - [ ] Add fulfilment/completion workflow
-- [ ] Add OpenAPI specification
-- [ ] Add structured logging and request correlation IDs
+- [ ] Add structured JSON logging
 - [ ] Add Redis only where a justified cache or coordination use case exists
 - [ ] Add performance/load testing
 
 ## Engineering Focus
 
-This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence boundary, transaction-scoped repositories, durable PostgreSQL persistence, domain-state enforcement, inventory consistency, deterministic error semantics, price snapshots, automated verification, container packaging and a clear path toward concurrency-safe production reservation semantics.
+This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence boundary, transaction-scoped repositories, durable PostgreSQL persistence, concurrency-safe inventory reservation, domain-state enforcement, deterministic errors, price snapshots, API documentation, request correlation, automated verification, container packaging and CI-backed database testing.
