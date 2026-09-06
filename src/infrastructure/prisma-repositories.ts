@@ -8,7 +8,7 @@ import type {
   ProductRepository,
   TransactionManager
 } from "../application/ports/repositories.js";
-import type { Customer, Inventory, Order, Product } from "../domain/order-model.js";
+import type { Customer, Inventory, Order, OrderStatus, Product } from "../domain/order-model.js";
 
 type PrismaDatabase = PrismaClient | Prisma.TransactionClient;
 
@@ -71,6 +71,30 @@ class PrismaInventoryRepository implements InventoryRepository {
       }
     });
   }
+
+  async reserveAvailable(productId: string, quantity: number): Promise<Inventory | null> {
+    const result = await this.db.inventory.updateMany({
+      where: { productId, availableQuantity: { gte: quantity } },
+      data: {
+        availableQuantity: { decrement: quantity },
+        reservedQuantity: { increment: quantity }
+      }
+    });
+    if (result.count !== 1) return null;
+    return this.db.inventory.findUnique({ where: { productId } });
+  }
+
+  async releaseReserved(productId: string, quantity: number): Promise<Inventory | null> {
+    const result = await this.db.inventory.updateMany({
+      where: { productId, reservedQuantity: { gte: quantity } },
+      data: {
+        availableQuantity: { increment: quantity },
+        reservedQuantity: { decrement: quantity }
+      }
+    });
+    if (result.count !== 1) return null;
+    return this.db.inventory.findUnique({ where: { productId } });
+  }
 }
 
 class PrismaOrderRepository implements OrderRepository {
@@ -120,6 +144,14 @@ class PrismaOrderRepository implements OrderRepository {
         items: { deleteMany: {}, create: items }
       }
     });
+  }
+
+  async transitionStatus(id: string, expected: OrderStatus, next: OrderStatus): Promise<boolean> {
+    const result = await this.db.order.updateMany({
+      where: { id, status: expected },
+      data: { status: next }
+    });
+    return result.count === 1;
   }
 }
 
