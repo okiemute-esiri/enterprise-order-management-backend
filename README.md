@@ -2,7 +2,7 @@
 
 A production-oriented TypeScript backend demonstrating customer, product, inventory and order-management workflows with explicit business-state rules, validation, automated tests, Docker packaging and CI.
 
-> **Project status:** A runnable in-memory implementation is present. Repository ports isolate the application service from persistence. PostgreSQL persistence, Prisma migrations, transaction-scoped repository adapters and CI-backed database integration are now being implemented; concurrency-safe reservation remains a roadmap item until explicitly verified.
+> **Project status:** A runnable in-memory implementation is present. Repository ports isolate the application service from persistence. PostgreSQL persistence, Prisma migrations, transaction-scoped repository adapters and CI-backed database integration have been added and are undergoing final CI verification; concurrency-safe reservation remains a roadmap item until explicitly verified.
 
 ## Implemented
 
@@ -34,7 +34,7 @@ A production-oriented TypeScript backend demonstrating customer, product, invent
 - Vitest + Supertest API workflow tests
 - PostgreSQL integration tests for persisted confirmation and cancellation
 - multi-stage non-root Docker image with generated Prisma client
-- GitHub Actions CI with PostgreSQL 16, migrations, typecheck, tests, build and Docker verification
+- GitHub Actions CI configured with PostgreSQL 16, migrations, typecheck, tests, build and Docker verification
 
 ## Current Architecture
 
@@ -134,7 +134,7 @@ docker build -t enterprise-order-management-backend .
 
 ## CI
 
-GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checking, unit/API/integration tests, production build and Docker image verification.
+GitHub Actions is configured to run PostgreSQL 16 and perform migration deployment, type checking, unit/API/integration tests, production build and Docker image verification.
 
 ## Roadmap
 
@@ -156,10 +156,11 @@ GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checki
 - [x] Add PostgreSQL repository adapters
 - [x] Add Prisma transaction-scoped repository boundary
 - [x] Add PostgreSQL integration tests
-- [x] Add PostgreSQL CI service and migration deployment
+- [x] Configure PostgreSQL CI service and migration deployment
 - [x] Add Docker packaging
 - [x] Add operational health endpoints
 - [x] Add graceful shutdown
+- [ ] Verify the complete PostgreSQL CI path on main
 - [ ] Add concurrency-safe inventory reservation with locking or atomic conditional updates
 - [ ] Add concurrency integration tests proving no overselling
 - [ ] Translate database uniqueness races to stable domain conflicts
