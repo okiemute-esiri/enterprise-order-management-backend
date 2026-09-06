@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/enterprise_order_management?schema=public
+      REDIS_URL: redis://localhost:6379
+      REDIS_CACHE_TTL_SECONDS: "30"
     services:
       postgres:
         image: postgres:16-alpine
@@ -24,6 +26,15 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d enterprise_order_management"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -41,6 +52,7 @@ jobs:
       - run: node scripts/perf-smoke.mjs
         env:
           DATABASE_URL: ""
+          REDIS_URL: ""
           PERF_REQUESTS: "300"
           PERF_CONCURRENCY: "20"
       - run: docker build -t enterprise-order-management-backend:ci .
