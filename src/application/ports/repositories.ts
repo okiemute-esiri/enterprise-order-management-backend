@@ -1,5 +1,12 @@
 import type { Customer, Inventory, Order, OrderStatus, Product } from "../../domain/order-model.js";
 
+export class RepositoryConflictError extends Error {
+  constructor(public readonly constraint: "customer_email" | "product_sku") {
+    super(`Persistence uniqueness conflict: ${constraint}`);
+    this.name = "RepositoryConflictError";
+  }
+}
+
 export interface CustomerRepository {
   findById(id: string): Promise<Customer | null>;
   findByEmail(email: string): Promise<Customer | null>;
