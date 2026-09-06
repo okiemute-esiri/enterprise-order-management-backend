@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { OrderManagementService } from "../src/application/order-management-service.js";
+import { RepositoryConflictError } from "../src/application/ports/repositories.js";
 import { DomainError } from "../src/domain/order-model.js";
 import { createInMemoryRepositories } from "../src/infrastructure/in-memory-repositories.js";
 
@@ -12,6 +13,32 @@ describe("OrderManagementService", () => {
     const service = createService();
     await service.createCustomer({ name: "Acme Corp", email: "Ops@Acme.test" });
     await expect(service.createCustomer({ name: "Acme EU", email: "ops@acme.test" })).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("maps a customer uniqueness race to the stable domain conflict", async () => {
+    const repositories = createInMemoryRepositories();
+    repositories.customers.save = async () => {
+      throw new RepositoryConflictError("customer_email");
+    };
+    const service = new OrderManagementService(repositories);
+
+    await expect(service.createCustomer({ name: "Race Corp", email: "race@test.dev" })).rejects.toMatchObject({
+      code: "CUSTOMER_EMAIL_CONFLICT",
+      status: 409
+    });
+  });
+
+  it("maps a product uniqueness race to the stable domain conflict", async () => {
+    const repositories = createInMemoryRepositories();
+    repositories.products.save = async () => {
+      throw new RepositoryConflictError("product_sku");
+    };
+    const service = new OrderManagementService(repositories);
+
+    await expect(service.createProduct({ sku: "RACE-1", name: "Race Product", unitPrice: 10 })).rejects.toMatchObject({
+      code: "SKU_CONFLICT",
+      status: 409
+    });
   });
 
   it("keeps an order pending when aggregate inventory is insufficient", async () => {
