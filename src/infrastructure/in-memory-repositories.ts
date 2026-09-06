@@ -10,40 +10,40 @@ import type { Customer, Inventory, Order, Product } from "../domain/order-model.
 
 class InMemoryCustomerRepository implements CustomerRepository {
   constructor(private records = new Map<string, Customer>()) {}
-  findById(id: string): Customer | null { return this.records.get(id) ?? null; }
-  findByEmail(email: string): Customer | null {
+  async findById(id: string): Promise<Customer | null> { return this.records.get(id) ?? null; }
+  async findByEmail(email: string): Promise<Customer | null> {
     const normalized = email.toLowerCase();
     return [...this.records.values()].find((customer) => customer.email.toLowerCase() === normalized) ?? null;
   }
-  save(customer: Customer): void { this.records.set(customer.id, customer); }
+  async save(customer: Customer): Promise<void> { this.records.set(customer.id, customer); }
   snapshot(): Map<string, Customer> { return new Map([...this.records].map(([id, value]) => [id, structuredClone(value)])); }
   restore(snapshot: Map<string, Customer>): void { this.records = snapshot; }
 }
 
 class InMemoryProductRepository implements ProductRepository {
   constructor(private records = new Map<string, Product>()) {}
-  findById(id: string): Product | null { return this.records.get(id) ?? null; }
-  findBySku(sku: string): Product | null {
+  async findById(id: string): Promise<Product | null> { return this.records.get(id) ?? null; }
+  async findBySku(sku: string): Promise<Product | null> {
     const normalized = sku.toLowerCase();
     return [...this.records.values()].find((product) => product.sku.toLowerCase() === normalized) ?? null;
   }
-  save(product: Product): void { this.records.set(product.id, product); }
+  async save(product: Product): Promise<void> { this.records.set(product.id, product); }
   snapshot(): Map<string, Product> { return new Map([...this.records].map(([id, value]) => [id, structuredClone(value)])); }
   restore(snapshot: Map<string, Product>): void { this.records = snapshot; }
 }
 
 class InMemoryInventoryRepository implements InventoryRepository {
   constructor(private records = new Map<string, Inventory>()) {}
-  findByProductId(productId: string): Inventory | null { return this.records.get(productId) ?? null; }
-  save(inventory: Inventory): void { this.records.set(inventory.productId, inventory); }
+  async findByProductId(productId: string): Promise<Inventory | null> { return this.records.get(productId) ?? null; }
+  async save(inventory: Inventory): Promise<void> { this.records.set(inventory.productId, inventory); }
   snapshot(): Map<string, Inventory> { return new Map([...this.records].map(([id, value]) => [id, structuredClone(value)])); }
   restore(snapshot: Map<string, Inventory>): void { this.records = snapshot; }
 }
 
 class InMemoryOrderRepository implements OrderRepository {
   constructor(private records = new Map<string, Order>()) {}
-  findById(id: string): Order | null { return this.records.get(id) ?? null; }
-  save(order: Order): void { this.records.set(order.id, order); }
+  async findById(id: string): Promise<Order | null> { return this.records.get(id) ?? null; }
+  async save(order: Order): Promise<void> { this.records.set(order.id, order); }
   snapshot(): Map<string, Order> { return new Map([...this.records].map(([id, value]) => [id, structuredClone(value)])); }
   restore(snapshot: Map<string, Order>): void { this.records = snapshot; }
 }
@@ -56,7 +56,7 @@ class InMemoryTransactionManager implements TransactionManager {
     private readonly orders: InMemoryOrderRepository
   ) {}
 
-  run<T>(operation: () => T): T {
+  async run<T>(operation: () => Promise<T>): Promise<T> {
     const snapshots = {
       customers: this.customers.snapshot(),
       products: this.products.snapshot(),
@@ -65,7 +65,7 @@ class InMemoryTransactionManager implements TransactionManager {
     };
 
     try {
-      return operation();
+      return await operation();
     } catch (error) {
       this.customers.restore(snapshots.customers);
       this.products.restore(snapshots.products);
