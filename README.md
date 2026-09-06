@@ -2,7 +2,7 @@
 
 A production-oriented TypeScript backend demonstrating customer, product, inventory and order-management workflows with explicit business-state rules, validation, automated tests, Docker packaging and CI.
 
-> **Project status:** The repository now includes in-memory and Prisma/PostgreSQL persistence, transaction-scoped repository adapters, PostgreSQL-backed integration tests, concurrency-safe reservation semantics verified under competing confirmations, stable uniqueness-race conflicts, request correlation IDs, structured JSON HTTP logging, a fulfillment workflow, an OpenAPI specification, Docker packaging and CI-backed database verification.
+> **Project status:** The repository now includes in-memory and Prisma/PostgreSQL persistence, transaction-scoped repository adapters, PostgreSQL-backed integration tests, concurrency-safe reservation semantics verified under competing confirmations, stable uniqueness-race conflicts, request correlation IDs, structured JSON HTTP logging, a fulfillment workflow, an OpenAPI specification, CI-backed performance smoke testing, Docker packaging and CI-backed database verification.
 
 ## Implemented
 
@@ -39,8 +39,9 @@ A production-oriented TypeScript backend demonstrating customer, product, invent
 - Vitest + Supertest API workflow tests
 - PostgreSQL integration tests for persisted confirmation, cancellation, fulfillment and concurrency behavior
 - OpenAPI 3.0 specification in `docs/openapi.yaml`
+- dependency-free HTTP performance smoke harness with concurrency and latency reporting
 - multi-stage non-root Docker image with generated Prisma client
-- GitHub Actions CI configured with PostgreSQL 16, migrations, typecheck, tests, build and Docker verification
+- GitHub Actions CI configured with PostgreSQL 16, migrations, typecheck, tests, build, performance smoke verification and Docker verification
 
 ## Current Architecture
 
@@ -140,12 +141,15 @@ npm run prisma:generate
 npm run typecheck
 npm test
 npm run build
+npm run perf:smoke
 docker build -t enterprise-order-management-backend .
 ```
 
+The performance smoke harness starts the built application on an ephemeral local port and issues concurrent liveness requests. It reports total requests, concurrency, failures, elapsed time, requests per second, and p50/p95/p99 latency as JSON. CI uses it as a correctness-oriented performance smoke check: HTTP failures fail the job, while latency numbers are reported rather than enforced as brittle shared-runner thresholds.
+
 ## CI
 
-GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checking, unit/API/integration tests, production build and Docker image verification.
+GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checking, unit/API/integration tests, production build, a concurrent performance smoke run and Docker image verification.
 
 ## Roadmap
 
@@ -179,9 +183,9 @@ GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checki
 - [x] Add graceful shutdown
 - [x] Add OpenAPI specification
 - [x] Add request correlation IDs
+- [x] Add performance/load smoke testing
 - [ ] Add Redis only where a justified cache or coordination use case exists
-- [ ] Add performance/load testing
 
 ## Engineering Focus
 
-This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence boundary, transaction-scoped repositories, durable PostgreSQL persistence, concurrency-safe inventory reservation, fulfillment semantics, domain-state enforcement, deterministic errors, uniqueness-race handling, price snapshots, API documentation, request correlation, structured logging, automated verification, container packaging and CI-backed database testing.
+This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence boundary, transaction-scoped repositories, durable PostgreSQL persistence, concurrency-safe inventory reservation, fulfillment semantics, domain-state enforcement, deterministic errors, uniqueness-race handling, price snapshots, API documentation, request correlation, structured logging, automated verification, performance smoke testing, container packaging and CI-backed database testing.
