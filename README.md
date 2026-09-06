@@ -2,7 +2,7 @@
 
 A production-oriented TypeScript backend demonstrating customer, product, inventory and order-management workflows with explicit business-state rules, validation, automated tests, Docker packaging and CI.
 
-> **Project status:** A runnable in-memory implementation is present. Repository ports now isolate the application service from persistence. PostgreSQL, Redis and durable transaction boundaries remain roadmap items and are not claimed as implemented.
+> **Project status:** A runnable in-memory implementation is present. Repository ports isolate the application service from persistence. PostgreSQL persistence, Prisma migrations, transaction-scoped repository adapters and CI-backed database integration are now being implemented; concurrency-safe reservation remains a roadmap item until explicitly verified.
 
 ## Implemented
 
@@ -11,10 +11,15 @@ A production-oriented TypeScript backend demonstrating customer, product, invent
 - versioned `/api/v1` API
 - HTTP adapter separated from application workflow logic
 - `OrderManagementService` application layer
-- repository ports for customers, products, inventory and orders
-- in-memory repository adapters used by the default runtime composition
-- customer creation with case-insensitive duplicate-email protection
-- product creation with case-insensitive unique-SKU protection
+- asynchronous repository ports for customers, products, inventory and orders
+- in-memory repository adapters used by the default test composition
+- explicit transaction boundary with rollback semantics in the in-memory adapter
+- Prisma PostgreSQL schema and initial migration
+- PostgreSQL repository adapters
+- transaction-scoped Prisma repositories using `$transaction`
+- runtime selection between PostgreSQL and in-memory persistence
+- customer creation with normalized duplicate-email protection
+- product creation with normalized unique-SKU protection
 - inventory adjustments with negative-stock protection
 - order creation with price snapshots and calculated totals
 - order confirmation with aggregate inventory validation and reservation
@@ -27,8 +32,9 @@ A production-oriented TypeScript backend demonstrating customer, product, invent
 - graceful SIGTERM/SIGINT shutdown
 - Vitest application-service tests
 - Vitest + Supertest API workflow tests
-- multi-stage non-root Docker image
-- GitHub Actions CI with typecheck, tests, build and Docker verification
+- PostgreSQL integration tests for persisted confirmation and cancellation
+- multi-stage non-root Docker image with generated Prisma client
+- GitHub Actions CI with PostgreSQL 16, migrations, typecheck, tests, build and Docker verification
 
 ## Current Architecture
 
@@ -42,13 +48,18 @@ Request validation
 OrderManagementService
         |
         v
-Repository ports
+Repository ports + transaction boundary
         |
-        v
-In-memory repository adapters
+        +-------------------+
+        |                   |
+        v                   v
+In-memory adapters     Prisma/PostgreSQL adapters
+                           |
+                           v
+                    PostgreSQL transaction
 ```
 
-The application service owns business workflow decisions but does not own storage collections. Persistence access is defined through interfaces for customers, products, inventory and orders. The default runtime composes those ports with in-memory adapters, so a durable implementation can be introduced without moving database concerns into the HTTP or application layers.
+The application service owns business workflow decisions but does not own storage collections. Persistence access is defined through interfaces for customers, products, inventory and orders. Transactional workflows receive transaction-scoped repositories, so database concerns remain outside the HTTP and application layers.
 
 ## API
 
@@ -83,64 +94,19 @@ Confirmation aggregates quantities by product before mutating inventory. If dupl
 
 When a confirmed order is cancelled, reserved quantities are released back to available inventory.
 
-## Example
+## PostgreSQL
 
-Create a customer:
+Set `DATABASE_URL` to use PostgreSQL at runtime. Without it, the service uses the in-memory adapters.
 
-```json
-{
-  "name": "Acme Corp",
-  "email": "ops@acme.test"
-}
+```bash
+cp .env.example .env
+npm install
+npm run prisma:generate
+npm run prisma:deploy
+npm run dev
 ```
 
-Create a product:
-
-```json
-{
-  "sku": "SKU-100",
-  "name": "Industrial Sensor",
-  "unitPrice": 125
-}
-```
-
-Adjust inventory:
-
-```json
-{
-  "quantity": 10
-}
-```
-
-Create an order:
-
-```json
-{
-  "customerId": "<uuid>",
-  "items": [
-    {
-      "productId": "<uuid>",
-      "quantity": 2
-    }
-  ]
-}
-```
-
-The service snapshots the current product price into each order item and calculates `lineTotal` and order `total`.
-
-## Error Semantics
-
-| Condition | HTTP | Code |
-| --- | ---: | --- |
-| Request validation failure | 422 | `VALIDATION_ERROR` |
-| Duplicate customer email | 409 | `CUSTOMER_EMAIL_CONFLICT` |
-| Duplicate product SKU | 409 | `SKU_CONFLICT` |
-| Unknown customer | 404 | `CUSTOMER_NOT_FOUND` |
-| Unknown product | 404 | `PRODUCT_NOT_FOUND` |
-| Unknown order | 404 | `ORDER_NOT_FOUND` |
-| Insufficient stock | 409 | `INSUFFICIENT_INVENTORY` |
-| Invalid inventory adjustment | 409 | `INVALID_INVENTORY_ADJUSTMENT` |
-| Invalid order transition | 409 | `INVALID_ORDER_STATE` |
+The current Prisma implementation provides durable persistence and transaction-scoped repository operations. It does **not** yet claim concurrency-safe inventory reservation under competing confirmations; row locking or an equivalent conditional-update strategy is still required and will be tested before that capability is claimed.
 
 ## Run Locally
 
@@ -159,38 +125,16 @@ npm start
 ## Validation
 
 ```bash
+npm run prisma:generate
 npm run typecheck
 npm test
 npm run build
 docker build -t enterprise-order-management-backend .
 ```
 
-The automated tests cover successful customer/product/inventory/order flow, confirmation, insufficient inventory rejection, cancellation, application-service state invariants, case-insensitive duplicate-email rejection and the aggregate duplicate-product-line inventory invariant.
-
-## Docker
-
-```bash
-docker build -t enterprise-order-management-backend .
-docker run --rm -p 3000:3000 enterprise-order-management-backend
-```
-
-The runtime image uses Node.js 22 Alpine and runs as the non-root `node` user.
-
 ## CI
 
-GitHub Actions performs:
-
-```text
-Install dependencies
-      |
-Type check
-      |
-Tests
-      |
-Production build
-      |
-Docker image build
-```
+GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checking, unit/API/integration tests, production build and Docker image verification.
 
 ## Roadmap
 
@@ -204,23 +148,27 @@ Docker image build
 - [x] Implement cancellation and stock restoration
 - [x] Add validation and standardized errors
 - [x] Separate HTTP adapter from application service
-- [x] Introduce repository interfaces
+- [x] Introduce asynchronous repository interfaces
 - [x] Add in-memory repository adapters
 - [x] Add application-service and API tests
+- [x] Add transaction abstraction and in-memory rollback coverage
+- [x] Add Prisma PostgreSQL schema and migration
+- [x] Add PostgreSQL repository adapters
+- [x] Add Prisma transaction-scoped repository boundary
+- [x] Add PostgreSQL integration tests
+- [x] Add PostgreSQL CI service and migration deployment
 - [x] Add Docker packaging
-- [x] Add GitHub Actions CI
 - [x] Add operational health endpoints
 - [x] Add graceful shutdown
-- [ ] Add PostgreSQL persistence and migrations
-- [ ] Add atomic database transaction for order confirmation
-- [ ] Add optimistic concurrency control
+- [ ] Add concurrency-safe inventory reservation with locking or atomic conditional updates
+- [ ] Add concurrency integration tests proving no overselling
+- [ ] Translate database uniqueness races to stable domain conflicts
 - [ ] Add fulfilment/completion workflow
 - [ ] Add OpenAPI specification
 - [ ] Add structured logging and request correlation IDs
 - [ ] Add Redis only where a justified cache or coordination use case exists
-- [ ] Add database integration tests
 - [ ] Add performance/load testing
 
 ## Engineering Focus
 
-This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence boundary, domain-state enforcement, inventory consistency, deterministic error semantics, price snapshots, automated verification, container packaging and a clear migration path toward durable transactional persistence.
+This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence boundary, transaction-scoped repositories, durable PostgreSQL persistence, domain-state enforcement, inventory consistency, deterministic error semantics, price snapshots, automated verification, container packaging and a clear path toward concurrency-safe production reservation semantics.
