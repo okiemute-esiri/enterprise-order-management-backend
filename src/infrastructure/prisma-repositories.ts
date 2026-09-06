@@ -1,16 +1,21 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
-import type {
-  CustomerRepository,
-  InventoryRepository,
-  OrderManagementRepositories,
-  OrderRepositories,
-  OrderRepository,
-  ProductRepository,
-  TransactionManager
+import { Prisma, type PrismaClient } from "@prisma/client";
+import {
+  RepositoryConflictError,
+  type CustomerRepository,
+  type InventoryRepository,
+  type OrderManagementRepositories,
+  type OrderRepositories,
+  type OrderRepository,
+  type ProductRepository,
+  type TransactionManager
 } from "../application/ports/repositories.js";
 import type { Customer, Inventory, Order, OrderStatus, Product } from "../domain/order-model.js";
 
 type PrismaDatabase = PrismaClient | Prisma.TransactionClient;
+
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
 
 class PrismaCustomerRepository implements CustomerRepository {
   constructor(private readonly db: PrismaDatabase) {}
@@ -24,11 +29,16 @@ class PrismaCustomerRepository implements CustomerRepository {
   }
 
   async save(customer: Customer): Promise<void> {
-    await this.db.customer.upsert({
-      where: { id: customer.id },
-      create: { ...customer, email: customer.email.toLowerCase() },
-      update: { name: customer.name, email: customer.email.toLowerCase() }
-    });
+    try {
+      await this.db.customer.upsert({
+        where: { id: customer.id },
+        create: { ...customer, email: customer.email.toLowerCase() },
+        update: { name: customer.name, email: customer.email.toLowerCase() }
+      });
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) throw new RepositoryConflictError("customer_email");
+      throw error;
+    }
   }
 }
 
@@ -46,11 +56,16 @@ class PrismaProductRepository implements ProductRepository {
   }
 
   async save(product: Product): Promise<void> {
-    await this.db.product.upsert({
-      where: { id: product.id },
-      create: { ...product, sku: product.sku.toUpperCase() },
-      update: { sku: product.sku.toUpperCase(), name: product.name, unitPrice: product.unitPrice }
-    });
+    try {
+      await this.db.product.upsert({
+        where: { id: product.id },
+        create: { ...product, sku: product.sku.toUpperCase() },
+        update: { sku: product.sku.toUpperCase(), name: product.name, unitPrice: product.unitPrice }
+      });
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) throw new RepositoryConflictError("product_sku");
+      throw error;
+    }
   }
 }
 
