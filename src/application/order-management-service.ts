@@ -130,6 +130,29 @@ export class OrderManagementService {
     });
   }
 
+  async fulfillOrder(orderId: string): Promise<Order> {
+    return this.repositories.transactions.run(async (repositories) => {
+      const order = await this.requireOrder(repositories, orderId);
+      if (order.status !== "CONFIRMED") {
+        throw new DomainError("INVALID_ORDER_STATE", "Only confirmed orders can be fulfilled", 409);
+      }
+
+      for (const [productId, quantity] of this.aggregateQuantities(order)) {
+        const consumed = await repositories.inventory.consumeReserved(productId, quantity);
+        if (!consumed) {
+          throw new DomainError("INVENTORY_INVARIANT_VIOLATION", "Reserved inventory is inconsistent with the confirmed order", 500);
+        }
+      }
+
+      const transitioned = await repositories.orders.transitionStatus(order.id, "CONFIRMED", "FULFILLED");
+      if (!transitioned) {
+        throw new DomainError("INVALID_ORDER_STATE", "Only confirmed orders can be fulfilled", 409);
+      }
+
+      return { ...order, status: "FULFILLED" };
+    });
+  }
+
   async getOrder(orderId: string): Promise<Order> {
     return this.requireOrder(this.repositories, orderId);
   }

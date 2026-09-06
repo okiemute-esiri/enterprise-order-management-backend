@@ -110,6 +110,15 @@ class PrismaInventoryRepository implements InventoryRepository {
     if (result.count !== 1) return null;
     return this.db.inventory.findUnique({ where: { productId } });
   }
+
+  async consumeReserved(productId: string, quantity: number): Promise<Inventory | null> {
+    const result = await this.db.inventory.updateMany({
+      where: { productId, reservedQuantity: { gte: quantity } },
+      data: { reservedQuantity: { decrement: quantity } }
+    });
+    if (result.count !== 1) return null;
+    return this.db.inventory.findUnique({ where: { productId } });
+  }
 }
 
 class PrismaOrderRepository implements OrderRepository {

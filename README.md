@@ -2,7 +2,7 @@
 
 A production-oriented TypeScript backend demonstrating customer, product, inventory and order-management workflows with explicit business-state rules, validation, automated tests, Docker packaging and CI.
 
-> **Project status:** The repository now includes in-memory and Prisma/PostgreSQL persistence, transaction-scoped repository adapters, PostgreSQL-backed integration tests, concurrency-safe reservation semantics verified under competing confirmations, request correlation IDs, an OpenAPI specification, Docker packaging and CI-backed database verification.
+> **Project status:** The repository now includes in-memory and Prisma/PostgreSQL persistence, transaction-scoped repository adapters, PostgreSQL-backed integration tests, concurrency-safe reservation semantics verified under competing confirmations, stable uniqueness-race conflicts, request correlation IDs, structured JSON HTTP logging, a fulfillment workflow, an OpenAPI specification, Docker packaging and CI-backed database verification.
 
 ## Implemented
 
@@ -20,21 +20,24 @@ A production-oriented TypeScript backend demonstrating customer, product, invent
 - runtime selection between PostgreSQL and in-memory persistence
 - customer creation with normalized duplicate-email protection
 - product creation with normalized unique-SKU protection
+- database uniqueness races translated to stable `409` domain conflicts
 - inventory adjustments with negative-stock protection
 - order creation with price snapshots and calculated totals
 - order confirmation with aggregate inventory validation and reservation
 - protection against duplicate product lines exceeding total available stock
 - concurrency-safe PostgreSQL reservation semantics verified with competing confirmations
 - order cancellation with reserved-stock restoration
+- order fulfillment with reserved-stock consumption
 - controlled order-state transitions
 - Zod request validation
 - structured domain errors
 - request correlation via `x-request-id` generation/preservation
+- structured JSON HTTP completion and unexpected-error logging
 - liveness and readiness endpoints
 - graceful SIGTERM/SIGINT shutdown
 - Vitest application-service tests
 - Vitest + Supertest API workflow tests
-- PostgreSQL integration tests for persisted confirmation, cancellation and concurrency behavior
+- PostgreSQL integration tests for persisted confirmation, cancellation, fulfillment and concurrency behavior
 - OpenAPI 3.0 specification in `docs/openapi.yaml`
 - multi-stage non-root Docker image with generated Prisma client
 - GitHub Actions CI configured with PostgreSQL 16, migrations, typecheck, tests, build and Docker verification
@@ -45,7 +48,7 @@ A production-oriented TypeScript backend demonstrating customer, product, invent
 HTTP / Express adapter
         |
         v
-Request validation
+Validation + correlation + structured logging
         |
         v
 OrderManagementService
@@ -77,11 +80,12 @@ POST /api/v1/orders
 GET  /api/v1/orders/:orderId
 POST /api/v1/orders/:orderId/confirm
 POST /api/v1/orders/:orderId/cancel
+POST /api/v1/orders/:orderId/fulfill
 ```
 
 The full OpenAPI contract is documented in `docs/openapi.yaml`.
 
-All HTTP responses include an `x-request-id` header. A caller-provided `x-request-id` is preserved; otherwise the service generates one.
+All HTTP responses include an `x-request-id` header. A caller-provided `x-request-id` is preserved; otherwise the service generates one. Completed requests are emitted as JSON log records containing request ID, method, path, status code and duration. Unexpected failures also emit structured JSON error records.
 
 ## Order Workflow
 
@@ -91,17 +95,17 @@ PENDING
   |  \ cancel
   v   v
 CONFIRMED   CANCELLED
-  |
-  | future fulfilment workflow
-  v
-FULFILLED
+  |   \
+  |    \ cancel
+  v     v
+FULFILLED  CANCELLED
 ```
 
 Confirmation aggregates quantities by product before mutating inventory. If duplicate order lines request the same product, their combined quantity is validated against available stock. If any aggregate requirement cannot be satisfied, confirmation fails with `409 INSUFFICIENT_INVENTORY`, inventory is left unchanged and the order remains pending.
 
 For PostgreSQL, reservation uses atomic conditional persistence semantics inside the transaction boundary. The concurrency integration test starts competing confirmations against stock that can satisfy only one order and verifies that overselling does not occur.
 
-When a confirmed order is cancelled, reserved quantities are released back to available inventory.
+When a confirmed order is cancelled, reserved quantities are released back to available inventory. When a confirmed order is fulfilled, the reserved quantities are consumed without increasing available stock. Both operations execute inside the transaction boundary and use guarded state transitions.
 
 ## PostgreSQL
 
@@ -167,17 +171,17 @@ GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checki
 - [x] Verify PostgreSQL CI on main
 - [x] Add concurrency-safe inventory reservation
 - [x] Add concurrency integration tests proving no overselling
+- [x] Translate database uniqueness races to stable domain conflicts
+- [x] Add fulfilment/completion workflow
+- [x] Add structured JSON logging
 - [x] Add Docker packaging
 - [x] Add operational health endpoints
 - [x] Add graceful shutdown
 - [x] Add OpenAPI specification
 - [x] Add request correlation IDs
-- [ ] Translate database uniqueness races to stable domain conflicts
-- [ ] Add fulfilment/completion workflow
-- [ ] Add structured JSON logging
 - [ ] Add Redis only where a justified cache or coordination use case exists
 - [ ] Add performance/load testing
 
 ## Engineering Focus
 
-This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence boundary, transaction-scoped repositories, durable PostgreSQL persistence, concurrency-safe inventory reservation, domain-state enforcement, deterministic errors, price snapshots, API documentation, request correlation, automated verification, container packaging and CI-backed database testing.
+This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence boundary, transaction-scoped repositories, durable PostgreSQL persistence, concurrency-safe inventory reservation, fulfillment semantics, domain-state enforcement, deterministic errors, uniqueness-race handling, price snapshots, API documentation, request correlation, structured logging, automated verification, container packaging and CI-backed database testing.

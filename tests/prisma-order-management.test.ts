@@ -55,6 +55,25 @@ describePostgres("Prisma order-management persistence", () => {
     expect(persistedInventory).toMatchObject({ availableQuantity: 1, reservedQuantity: 0 });
   });
 
+  it("consumes reserved inventory when an order is fulfilled", async () => {
+    const customer = await service.createCustomer({ name: "Postgres Fulfil", email: "pg-fulfil@test.dev" });
+    const product = await service.createProduct({ sku: "PG-250", name: "Actuator", unitPrice: 90 });
+    await service.adjustInventory(product.id, 4);
+    const order = await service.createOrder({
+      customerId: customer.id,
+      items: [{ productId: product.id, quantity: 3 }]
+    });
+
+    await service.confirmOrder(order.id);
+    const fulfilled = await service.fulfillOrder(order.id);
+    expect(fulfilled.status).toBe("FULFILLED");
+
+    const persistedOrder = await prisma.order.findUnique({ where: { id: order.id } });
+    const persistedInventory = await prisma.inventory.findUnique({ where: { productId: product.id } });
+    expect(persistedOrder?.status).toBe("FULFILLED");
+    expect(persistedInventory).toMatchObject({ availableQuantity: 1, reservedQuantity: 0 });
+  });
+
   it("allows only one concurrent confirmation when stock cannot satisfy both orders", async () => {
     const customer = await service.createCustomer({ name: "Postgres Concurrent", email: "pg-concurrent@test.dev" });
     const product = await service.createProduct({ sku: "PG-300", name: "Controller", unitPrice: 60 });

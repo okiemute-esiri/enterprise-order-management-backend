@@ -2,7 +2,7 @@ import type { Customer, Inventory, Order, OrderStatus, Product } from "../../dom
 
 export class RepositoryConflictError extends Error {
   constructor(public readonly constraint: "customer_email" | "product_sku") {
-    super(`Persistence uniqueness conflict: ${constraint}`);
+    super(`Repository uniqueness conflict: ${constraint}`);
     this.name = "RepositoryConflictError";
   }
 }
@@ -24,6 +24,7 @@ export interface InventoryRepository {
   save(inventory: Inventory): Promise<void>;
   reserveAvailable(productId: string, quantity: number): Promise<Inventory | null>;
   releaseReserved(productId: string, quantity: number): Promise<Inventory | null>;
+  consumeReserved(productId: string, quantity: number): Promise<Inventory | null>;
 }
 
 export interface OrderRepository {

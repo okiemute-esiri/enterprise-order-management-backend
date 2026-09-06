@@ -4,6 +4,7 @@ import { z } from "zod";
 import { OrderManagementService } from "./application/order-management-service.js";
 import { DomainError } from "./domain/order-model.js";
 import { createInMemoryRepositories } from "./infrastructure/in-memory-repositories.js";
+import { logger } from "./infrastructure/logger.js";
 
 const customerSchema = z.object({ name: z.string().trim().min(2), email: z.string().trim().email() });
 const productSchema = z.object({ sku: z.string().trim().min(2), name: z.string().trim().min(2), unitPrice: z.number().positive() });
@@ -24,7 +25,17 @@ export function createApp(service: OrderManagementService = createDefaultService
   app.use((req, res, next) => {
     const incomingRequestId = req.header("x-request-id")?.trim();
     const requestId = incomingRequestId || randomUUID();
+    const startedAt = process.hrtime.bigint();
     res.setHeader("x-request-id", requestId);
+    res.on("finish", () => {
+      logger.info("http_request_completed", {
+        requestId,
+        method: req.method,
+        path: req.originalUrl,
+        statusCode: res.statusCode,
+        durationMs: Number(process.hrtime.bigint() - startedAt) / 1_000_000
+      });
+    });
     next();
   });
 
@@ -69,19 +80,31 @@ export function createApp(service: OrderManagementService = createDefaultService
     catch (error) { next(error); }
   });
 
+  app.post("/api/v1/orders/:orderId/fulfill", async (req, res, next) => {
+    try { res.json({ data: await service.fulfillOrder(req.params.orderId) }); }
+    catch (error) { next(error); }
+  });
+
   app.get("/api/v1/orders/:orderId", async (req, res, next) => {
     try { res.json({ data: await service.getOrder(req.params.orderId) }); }
     catch (error) { next(error); }
   });
 
-  app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
     if (error instanceof z.ZodError) {
       return res.status(422).json({ error: { code: "VALIDATION_ERROR", message: "Request validation failed", details: error.issues } });
     }
     if (error instanceof DomainError) {
       return res.status(error.status).json({ error: { code: error.code, message: error.message } });
     }
-    console.error(error);
+
+    logger.error("http_request_failed", {
+      requestId: res.getHeader("x-request-id"),
+      method: req.method,
+      path: req.originalUrl,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : String(error)
+    });
     return res.status(500).json({ error: { code: "INTERNAL_ERROR", message: "Unexpected server error" } });
   });
 

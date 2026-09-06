@@ -51,6 +51,13 @@ class InMemoryInventoryRepository implements InventoryRepository {
     this.records.set(productId, updated);
     return updated;
   }
+  async consumeReserved(productId: string, quantity: number): Promise<Inventory | null> {
+    const current = this.records.get(productId);
+    if (!current || current.reservedQuantity < quantity) return null;
+    const updated = { ...current, reservedQuantity: current.reservedQuantity - quantity };
+    this.records.set(productId, updated);
+    return updated;
+  }
   snapshot(): Map<string, Inventory> { return new Map([...this.records].map(([id, value]) => [id, structuredClone(value)])); }
   restore(snapshot: Map<string, Inventory>): void { this.records = snapshot; }
 }

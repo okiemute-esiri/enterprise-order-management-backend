@@ -74,4 +74,20 @@ describe("enterprise order workflow", () => {
     const cancelled = await request(app).post(`/api/v1/orders/${created.body.data.id}/cancel`).expect(200);
     expect(cancelled.body.data.status).toBe("CANCELLED");
   });
+
+  it("fulfills a confirmed order and rejects repeat fulfillment", async () => {
+    const app = createApp();
+    const customer = await request(app).post("/api/v1/customers").send({ name: "Fulfil Ltd", email: "fulfil@test.dev" });
+    const product = await request(app).post("/api/v1/products").send({ sku: "SKU-400", name: "Actuator", unitPrice: 95 });
+    const productId = product.body.data.id as string;
+    await request(app).post(`/api/v1/inventory/${productId}/adjustments`).send({ quantity: 2 }).expect(200);
+    const created = await request(app).post("/api/v1/orders").send({ customerId: customer.body.data.id, items: [{ productId, quantity: 2 }] }).expect(201);
+    await request(app).post(`/api/v1/orders/${created.body.data.id}/confirm`).expect(200);
+
+    const fulfilled = await request(app).post(`/api/v1/orders/${created.body.data.id}/fulfill`).expect(200);
+    expect(fulfilled.body.data.status).toBe("FULFILLED");
+
+    const repeated = await request(app).post(`/api/v1/orders/${created.body.data.id}/fulfill`).expect(409);
+    expect(repeated.body.error.code).toBe("INVALID_ORDER_STATE");
+  });
 });
