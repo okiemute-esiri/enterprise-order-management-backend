@@ -2,7 +2,7 @@
 
 A production-oriented TypeScript backend demonstrating customer, product, inventory and order-management workflows with explicit business-state rules, validation, automated tests, Docker packaging and CI.
 
-> **Project status:** The repository now includes in-memory and Prisma/PostgreSQL persistence, transaction-scoped repository adapters, PostgreSQL-backed integration tests, concurrency-safe reservation semantics verified under competing confirmations, stable uniqueness-race conflicts, request correlation IDs, structured JSON HTTP logging, a fulfillment workflow, an OpenAPI specification, CI-backed performance smoke testing, Docker packaging and CI-backed database verification.
+> **Project status:** The repository now includes in-memory and Prisma/PostgreSQL persistence, transaction-scoped repository adapters, PostgreSQL-backed integration tests, concurrency-safe reservation semantics verified under competing confirmations, stable uniqueness-race conflicts, request correlation IDs, structured JSON HTTP logging, Redis-backed order caching, a fulfillment workflow, an OpenAPI specification, CI-backed performance smoke testing, Docker packaging and CI-backed database verification.
 
 ## Implemented
 
@@ -33,15 +33,19 @@ A production-oriented TypeScript backend demonstrating customer, product, invent
 - structured domain errors
 - request correlation via `x-request-id` generation/preservation
 - structured JSON HTTP completion and unexpected-error logging
+- optional Redis read-through/write-through cache for order snapshots
+- configurable Redis cache TTL via `REDIS_CACHE_TTL_SECONDS`
+- cache failures isolated from transactional order workflows
 - liveness and readiness endpoints
-- graceful SIGTERM/SIGINT shutdown
+- graceful SIGTERM/SIGINT shutdown with Redis and PostgreSQL cleanup
 - Vitest application-service tests
 - Vitest + Supertest API workflow tests
 - PostgreSQL integration tests for persisted confirmation, cancellation, fulfillment and concurrency behavior
+- Redis integration coverage in CI
 - OpenAPI 3.0 specification in `docs/openapi.yaml`
 - dependency-free HTTP performance smoke harness with concurrency and latency reporting
 - multi-stage non-root Docker image with generated Prisma client
-- GitHub Actions CI configured with PostgreSQL 16, migrations, typecheck, tests, build, performance smoke verification and Docker verification
+- GitHub Actions CI configured with PostgreSQL 16, Redis 7, migrations, typecheck, tests, build, performance smoke verification and Docker verification
 
 ## Current Architecture
 
@@ -54,19 +58,24 @@ Validation + correlation + structured logging
         v
 OrderManagementService
         |
-        v
-Repository ports + transaction boundary
-        |
-        +-------------------+
-        |                   |
-        v                   v
-In-memory adapters     Prisma/PostgreSQL adapters
-                           |
-                           v
-                    PostgreSQL transaction
+        +----------------------+
+        |                      |
+        v                      v
+Repository ports          OrderCache port
+        |                      |
+        +-----------+          v
+        |           |      Redis cache
+        v           v
+In-memory      Prisma/PostgreSQL
+adapters           adapters
+                      |
+                      v
+              PostgreSQL transaction
 ```
 
 The application service owns business workflow decisions but does not own storage collections. Persistence access is defined through interfaces for customers, products, inventory and orders. Transactional workflows receive transaction-scoped repositories, so database concerns remain outside the HTTP and application layers.
+
+Redis is used for a concrete acceleration use case: caching order snapshots returned by `GET /api/v1/orders/:orderId`. Reads use Redis first and fall back to the persistence layer on a miss. Order creation and every state transition refresh the cache after the durable operation succeeds. Redis is therefore never the source of truth, and cache connectivity failures degrade to the database/in-memory persistence path rather than failing order workflows.
 
 ## API
 
@@ -108,9 +117,9 @@ For PostgreSQL, reservation uses atomic conditional persistence semantics inside
 
 When a confirmed order is cancelled, reserved quantities are released back to available inventory. When a confirmed order is fulfilled, the reserved quantities are consumed without increasing available stock. Both operations execute inside the transaction boundary and use guarded state transitions.
 
-## PostgreSQL
+## PostgreSQL and Redis
 
-Set `DATABASE_URL` to use PostgreSQL at runtime. Without it, the service uses the in-memory adapters.
+Set `DATABASE_URL` to use PostgreSQL at runtime. Without it, the service uses the in-memory adapters. Set `REDIS_URL` to enable the optional Redis order cache. Without it, caching is disabled through a no-op cache implementation.
 
 ```bash
 cp .env.example .env
@@ -118,6 +127,13 @@ npm install
 npm run prisma:generate
 npm run prisma:deploy
 npm run dev
+```
+
+Default local Redis configuration:
+
+```text
+REDIS_URL=redis://localhost:6379
+REDIS_CACHE_TTL_SECONDS=30
 ```
 
 ## Run Locally
@@ -149,7 +165,7 @@ The performance smoke harness starts the built application on an ephemeral local
 
 ## CI
 
-GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checking, unit/API/integration tests, production build, a concurrent performance smoke run and Docker image verification.
+GitHub Actions runs PostgreSQL 16 and Redis 7 and performs migration deployment, type checking, unit/API/PostgreSQL/Redis integration tests, production build, a concurrent performance smoke run and Docker image verification.
 
 ## Roadmap
 
@@ -184,8 +200,8 @@ GitHub Actions runs PostgreSQL 16 and performs migration deployment, type checki
 - [x] Add OpenAPI specification
 - [x] Add request correlation IDs
 - [x] Add performance/load smoke testing
-- [ ] Add Redis only where a justified cache or coordination use case exists
+- [x] Add Redis for justified order-read caching
 
 ## Engineering Focus
 
-This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence boundary, transaction-scoped repositories, durable PostgreSQL persistence, concurrency-safe inventory reservation, fulfillment semantics, domain-state enforcement, deterministic errors, uniqueness-race handling, price snapshots, API documentation, request correlation, structured logging, automated verification, performance smoke testing, container packaging and CI-backed database testing.
+This repository demonstrates backend engineering beyond CRUD: application-layer orchestration, dependency inversion at the persistence and cache boundaries, transaction-scoped repositories, durable PostgreSQL persistence, concurrency-safe inventory reservation, fulfillment semantics, domain-state enforcement, deterministic errors, uniqueness-race handling, Redis read-through/write-through caching, price snapshots, API documentation, request correlation, structured logging, automated verification, performance smoke testing, container packaging and CI-backed PostgreSQL/Redis testing.
