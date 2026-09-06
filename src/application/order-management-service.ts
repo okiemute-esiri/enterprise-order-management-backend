@@ -71,27 +71,19 @@ export class OrderManagementService {
         throw new DomainError("INVALID_ORDER_STATE", "Only pending orders can be confirmed", 409);
       }
 
-      const requiredByProduct = this.aggregateQuantities(order);
-      for (const [productId, quantity] of requiredByProduct) {
-        const stock = await repositories.inventory.findByProductId(productId);
-        if (!stock || stock.availableQuantity < quantity) {
+      for (const [productId, quantity] of this.aggregateQuantities(order)) {
+        const reserved = await repositories.inventory.reserveAvailable(productId, quantity);
+        if (!reserved) {
           throw new DomainError("INSUFFICIENT_INVENTORY", "Requested quantity is not currently available", 409);
         }
       }
 
-      for (const [productId, quantity] of requiredByProduct) {
-        const stock = await repositories.inventory.findByProductId(productId);
-        if (!stock) throw new DomainError("PRODUCT_NOT_FOUND", "Product inventory not found", 404);
-        await repositories.inventory.save({
-          ...stock,
-          availableQuantity: stock.availableQuantity - quantity,
-          reservedQuantity: stock.reservedQuantity + quantity
-        });
+      const transitioned = await repositories.orders.transitionStatus(order.id, "PENDING", "CONFIRMED");
+      if (!transitioned) {
+        throw new DomainError("INVALID_ORDER_STATE", "Only pending orders can be confirmed", 409);
       }
 
-      const confirmed: Order = { ...order, status: "CONFIRMED" };
-      await repositories.orders.save(confirmed);
-      return confirmed;
+      return { ...order, status: "CONFIRMED" };
     });
   }
 
@@ -104,19 +96,19 @@ export class OrderManagementService {
 
       if (order.status === "CONFIRMED") {
         for (const [productId, quantity] of this.aggregateQuantities(order)) {
-          const stock = await repositories.inventory.findByProductId(productId);
-          if (!stock) throw new DomainError("PRODUCT_NOT_FOUND", "Product inventory not found", 404);
-          await repositories.inventory.save({
-            ...stock,
-            availableQuantity: stock.availableQuantity + quantity,
-            reservedQuantity: stock.reservedQuantity - quantity
-          });
+          const released = await repositories.inventory.releaseReserved(productId, quantity);
+          if (!released) {
+            throw new DomainError("INVENTORY_INVARIANT_VIOLATION", "Reserved inventory is inconsistent with the confirmed order", 500);
+          }
         }
       }
 
-      const cancelled: Order = { ...order, status: "CANCELLED" };
-      await repositories.orders.save(cancelled);
-      return cancelled;
+      const transitioned = await repositories.orders.transitionStatus(order.id, order.status, "CANCELLED");
+      if (!transitioned) {
+        throw new DomainError("INVALID_ORDER_STATE", "Order cannot be cancelled from its current state", 409);
+      }
+
+      return { ...order, status: "CANCELLED" };
     });
   }
 
