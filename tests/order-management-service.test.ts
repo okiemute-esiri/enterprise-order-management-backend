@@ -42,7 +42,7 @@ describe("OrderManagementService", () => {
     await expect(service.confirmOrder(order.id)).rejects.toBeInstanceOf(DomainError);
   });
 
-  it("rolls back inventory when order persistence fails during confirmation", async () => {
+  it("rolls back inventory when the order transition fails during confirmation", async () => {
     const repositories = createInMemoryRepositories();
     const service = new OrderManagementService(repositories);
     const customer = await service.createCustomer({ name: "Delta Ltd", email: "delta@test.dev" });
@@ -50,10 +50,8 @@ describe("OrderManagementService", () => {
     await service.adjustInventory(product.id, 2);
     const order = await service.createOrder({ customerId: customer.id, items: [{ productId: product.id, quantity: 2 }] });
 
-    const saveOrder = repositories.orders.save.bind(repositories.orders);
-    repositories.orders.save = async (candidate) => {
-      if (candidate.status === "CONFIRMED") throw new Error("simulated persistence failure");
-      await saveOrder(candidate);
+    repositories.orders.transitionStatus = async () => {
+      throw new Error("simulated persistence failure");
     };
 
     await expect(service.confirmOrder(order.id)).rejects.toThrow("simulated persistence failure");
