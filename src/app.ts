@@ -23,6 +23,14 @@ const orderSchema = z.object({
   items: z.array(z.object({ productId: z.string().uuid(), quantity: z.number().int().positive() })).min(1)
 });
 
+function aggregateOrderRequirements(items: OrderItem[]): Map<string, number> {
+  const requiredByProduct = new Map<string, number>();
+  for (const item of items) {
+    requiredByProduct.set(item.productId, (requiredByProduct.get(item.productId) ?? 0) + item.quantity);
+  }
+  return requiredByProduct;
+}
+
 export function createApp() {
   const customers = new Map<string, Customer>();
   const products = new Map<string, Product>();
@@ -91,15 +99,21 @@ export function createApp() {
       const order = orders.get(req.params.orderId);
       if (!order) throw new DomainError("ORDER_NOT_FOUND", "Order not found", 404);
       if (order.status !== "PENDING") throw new DomainError("INVALID_ORDER_STATE", "Only pending orders can be confirmed", 409);
-      for (const item of order.items) {
-        const stock = inventory.get(item.productId)!;
-        if (stock.availableQuantity < item.quantity) throw new DomainError("INSUFFICIENT_INVENTORY", "Requested quantity is not currently available", 409);
+
+      const requiredByProduct = aggregateOrderRequirements(order.items);
+      for (const [productId, requiredQuantity] of requiredByProduct) {
+        const stock = inventory.get(productId)!;
+        if (stock.availableQuantity < requiredQuantity) {
+          throw new DomainError("INSUFFICIENT_INVENTORY", "Requested quantity is not currently available", 409);
+        }
       }
-      for (const item of order.items) {
-        const stock = inventory.get(item.productId)!;
-        stock.availableQuantity -= item.quantity;
-        stock.reservedQuantity += item.quantity;
+
+      for (const [productId, requiredQuantity] of requiredByProduct) {
+        const stock = inventory.get(productId)!;
+        stock.availableQuantity -= requiredQuantity;
+        stock.reservedQuantity += requiredQuantity;
       }
+
       order.status = "CONFIRMED";
       res.json({ data: order });
     } catch (error) { next(error); }
@@ -111,10 +125,11 @@ export function createApp() {
       if (!order) throw new DomainError("ORDER_NOT_FOUND", "Order not found", 404);
       if (order.status === "FULFILLED" || order.status === "CANCELLED") throw new DomainError("INVALID_ORDER_STATE", "Order cannot be cancelled from its current state", 409);
       if (order.status === "CONFIRMED") {
-        for (const item of order.items) {
-          const stock = inventory.get(item.productId)!;
-          stock.availableQuantity += item.quantity;
-          stock.reservedQuantity -= item.quantity;
+        const requiredByProduct = aggregateOrderRequirements(order.items);
+        for (const [productId, requiredQuantity] of requiredByProduct) {
+          const stock = inventory.get(productId)!;
+          stock.availableQuantity += requiredQuantity;
+          stock.reservedQuantity -= requiredQuantity;
         }
       }
       order.status = "CANCELLED";
