@@ -7,7 +7,7 @@ import type {
   ProductRepository,
   TransactionManager
 } from "../application/ports/repositories.js";
-import type { Customer, Inventory, Order, Product } from "../domain/order-model.js";
+import type { Customer, Inventory, Order, OrderStatus, Product } from "../domain/order-model.js";
 
 class InMemoryCustomerRepository implements CustomerRepository {
   constructor(private records = new Map<string, Customer>()) {}
@@ -37,6 +37,20 @@ class InMemoryInventoryRepository implements InventoryRepository {
   constructor(private records = new Map<string, Inventory>()) {}
   async findByProductId(productId: string): Promise<Inventory | null> { return this.records.get(productId) ?? null; }
   async save(inventory: Inventory): Promise<void> { this.records.set(inventory.productId, inventory); }
+  async reserveAvailable(productId: string, quantity: number): Promise<Inventory | null> {
+    const current = this.records.get(productId);
+    if (!current || current.availableQuantity < quantity) return null;
+    const updated = { ...current, availableQuantity: current.availableQuantity - quantity, reservedQuantity: current.reservedQuantity + quantity };
+    this.records.set(productId, updated);
+    return updated;
+  }
+  async releaseReserved(productId: string, quantity: number): Promise<Inventory | null> {
+    const current = this.records.get(productId);
+    if (!current || current.reservedQuantity < quantity) return null;
+    const updated = { ...current, availableQuantity: current.availableQuantity + quantity, reservedQuantity: current.reservedQuantity - quantity };
+    this.records.set(productId, updated);
+    return updated;
+  }
   snapshot(): Map<string, Inventory> { return new Map([...this.records].map(([id, value]) => [id, structuredClone(value)])); }
   restore(snapshot: Map<string, Inventory>): void { this.records = snapshot; }
 }
@@ -45,6 +59,12 @@ class InMemoryOrderRepository implements OrderRepository {
   constructor(private records = new Map<string, Order>()) {}
   async findById(id: string): Promise<Order | null> { return this.records.get(id) ?? null; }
   async save(order: Order): Promise<void> { this.records.set(order.id, order); }
+  async transitionStatus(id: string, expected: OrderStatus, next: OrderStatus): Promise<boolean> {
+    const current = this.records.get(id);
+    if (!current || current.status !== expected) return false;
+    this.records.set(id, { ...current, status: next });
+    return true;
+  }
   snapshot(): Map<string, Order> { return new Map([...this.records].map(([id, value]) => [id, structuredClone(value)])); }
   restore(snapshot: Map<string, Order>): void { this.records = snapshot; }
 }
